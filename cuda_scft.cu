@@ -46,30 +46,36 @@ reduce3(T *g_idata, T *g_odata, unsigned int n)
 	
 	unsigned long j=blockIdx.x+gridDim.x*blockIdx.y+gridDim.y*gridDim.x*blockIdx.z;
 	
-    unsigned int tid = threadIdx.x;
-    unsigned int ij = j*(gridDim.x*gridDim.y*gridDim.z)+  threadIdx.x;
+	unsigned int tid = threadIdx.x;
+	
+	T temp;
+	T mySum = 0;
+	
+      for (unsigned int s=0; s<(n/blockDim.x+1); s++) {
+	    temp=((s+threadIdx.x*(n/blockDim.x+1))<n)?g_idata[s+threadIdx.x*(n/blockDim.x+1)] : 0;
+		
+            mySum = mySum + temp;
+    
 
-    T mySum = (ij < n) ? g_idata[ij] : 0;
-
-    if (ij + blockDim.x < n)
-        mySum += g_idata[ij+blockDim.x];
-	__syncthreads();
+        __syncthreads();
+    }
     sdata[tid] = mySum;
-    if(j==0)
-	printf("%d %d %g\n",threadIdx.x,ij,mySum);
-    // do reduction in shared mem
-    for (unsigned int s=blockDim.x/2; s>0; s>>=1)
+	__syncthreads();
+  mySum=0;
+ 	printf("%d %g\n",tid,sdata[tid]);
+    for (unsigned int s=blockDim.x/2; s>0; s>=1)
     {
         if (tid < s)
         {
-            sdata[tid] = mySum = mySum + sdata[tid + s];
+		 
+            sdata[tid] += sdata[tid + s];
         }
 
         __syncthreads();
     }
-
+	printf("%d %g\n",tid,sdata[tid]);
     // write result for this block to global mem
-    if (tid == 0) g_odata[blockIdx.x] = mySum;
+    if (tid == 0) g_odata[threadIdx.x] = mySum;
 }
 
 __global__ void initilize_wdz(double *w,double *wdz,double ds2);
@@ -93,6 +99,8 @@ extern void sovDifFft(GPU_INFO *gpu_info,CUFFT_INFO *cufft_info,std::vector<doub
 	average_cu.resize(gpu_info->GPU_N);
 	int threads=8;
 	int smemSize = (threads <= 32) ? 2 * threads * sizeof(double) : threads * sizeof(double);
+	
+	
 	for(gpu_index=0;gpu_index<gpu_info->GPU_N;gpu_index++){	
 		checkCudaErrors(cudaSetDevice(gpu_index));
 		
@@ -102,8 +110,9 @@ extern void sovDifFft(GPU_INFO *gpu_info,CUFFT_INFO *cufft_info,std::vector<doub
 		cudaDeviceSynchronize();
 		//display_GPU_double_data2<<<10,10>>>(cufft_info->wdz_cu[gpu_index],gpu_index);
 		average_GPU_double_data<<<10,10>>>(cufft_info->wa_cu[gpu_index],average_cu[gpu_index]);
+		
 		if(gpu_index==0){
-		reduce3<double><<< 16, threads, smemSize >>>(cufft_info->wa_cu[gpu_index], average_cu[gpu_index], 100);
+		//reduce3<double><<< 1, threads, smemSize >>>(cufft_info->wa_cu[gpu_index], average_cu[gpu_index], 100);
 		//display_GPU_double_data2<<<1,100>>>(cufft_info->wa_cu[gpu_index],gpu_index);
 		display_GPU_double_data2<<<1,1>>>(average_cu[gpu_index],gpu_index);
 		}
