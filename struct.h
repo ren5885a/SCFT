@@ -19,43 +19,71 @@ typedef struct {
 
 
 typedef struct {
+	int kernal_type;
 	cudaDeviceProp prop[64];
 	int GPU_N;
-	int *whichGPU;
+	int *whichGPUs;
 	
 }GPU_INFO;
 typedef struct{
-	cufftHandle plan_forward,plan_backward;
+	
 
+	//! scft infomation
+	
+	int batch;// Number of scft calculation in one GPU.
+	int intag;
+	double hAB; 
+	double fA;
+	double fB;
+	int MaxIT;//Maximum iteration steps
+	
+	//! Grid size of the system 
 	int Nx;
 	int Ny;
 	int Nz;
+	
 	int Nx_cu;
 	int Ny_cu;
 	int Nz_cu;
 	
 	long NxNyNz;	//!total grid number
+	long NxNyNz1;
 	long NxNyNz_gpu;	//! grid number in each GPU
+
+	int Nxh1;
+
+	
 	int NsA;
 	int NsB;
-	int ns;	
+	int ns;
+	int dNsB;
+	int dfB;
 	
 	double lx,ly,lz;
 	double dx,dy,dz;
-	double ds0,ds2; 
-	
-	double *kx,*kz,*ky;
+	double ds0,ds2; 	
 
-	int batch;
+	// cufft configuration variable
+
+	
+	cudaStream_t *stream;
+	cufftHandle plan_forward,plan_backward;
+
+	
+
+	//! Temperary variables for cufft
+
 	double *in;
 	cufftDoubleComplex *out;
 	
 	cudaLibXtDesc *device_in;
 	cudaLibXtDesc *device_out;
-	cudaStream_t *stream;
+
 	
-	double **kxyzdz_cu;//! pointer which is to kxyzdz in each gpu, the same in each GPU not acoording to grid.	
-	double *kxyzdz;//!	pointer to CPU
+
+	size_t *worksize;
+	
+	double *kx,*kz,*ky;	
 	
 	double *wa;
 	double *wb;
@@ -64,12 +92,16 @@ typedef struct{
 	double *pha;
 	double *phb;
 	double *phc;
-	
+
+	double **kxyzdz_cu;//! pointer which is to kxyzdz in each gpu, the same in each GPU not acoording to grid.	
+	double *kxyzdz;//!	pointer to CPU
+
 	std::vector<double*> qa_cu;
 	std::vector<double*> wa_cu;
 	std::vector<double*> wb_cu;
 	std::vector<double*>qInt_cu;
 	std::vector<double*> wdz_cu;
+
 	double *qA;
 	double *qB;
 	double *qC;

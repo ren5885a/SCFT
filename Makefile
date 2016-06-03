@@ -215,8 +215,8 @@ ifeq ($(SAMPLE_ENABLED),0)
 EXEC ?= @echo "[@]"
 endif
 
-HEADER = init_cuda.h struct.h cuda_scft.h
-FLAGFFT=-lcufft 
+HEADER = init_cuda.h struct.h cuda_scft.h scft.h init.h
+FLAGFFT=-lcufft -lfftw3 
 ################################################################################
 
 # Target rules
@@ -234,14 +234,20 @@ endif
 main.o:main.cpp $(HEADER)
 	$(EXEC) $(NVCC) $(INCLUDES) $(ALL_CCFLAGS) $(GENCODE_FLAGS) -o $@ -c $<
 
+scft.o:scft.cpp $(HEADER)
+	$(EXEC) $(NVCC) $(INCLUDES) $(ALL_CCFLAGS) $(GENCODE_FLAGS) -o $@ -c $<
+
+init.o:init.cpp $(HEADER)
+	$(EXEC) $(NVCC) $(INCLUDES) $(ALL_CCFLAGS) $(GENCODE_FLAGS) -o $@ -c $<
+
 scan.o:init_cuda.cu  $(HEADER)
-	$(EXEC) $(NVCC) $(INCLUDES) $(ALL_CCFLAGS) $(GENCODE_FLAGS) -lcufft -o $@ -c $<
+	$(EXEC) $(NVCC) $(INCLUDES) $(ALL_CCFLAGS) $(GENCODE_FLAGS) -g -G -lcufft -o $@ -c $<
 
 cuda_scft.o:cuda_scft.cu  $(HEADER)
 	$(EXEC) $(NVCC) $(INCLUDES) $(ALL_CCFLAGS) $(GENCODE_FLAGS) -lcufft -o $@ -c $<
 
-scan: main.o scan.o cuda_scft.o
-	$(EXEC) $(NVCC) $(ALL_LDFLAGS) $(GENCODE_FLAGS) $(FLAGFFT) -o $@ $+ $(LIBRARIES) 
+scan: main.o scan.o cuda_scft.o scft.o init.o
+	$(EXEC) $(NVCC) $(ALL_LDFLAGS) $(GENCODE_FLAGS) $(FLAGFFT) -std=c++11 -o $@ $+ $(LIBRARIES) 
 
 
 	

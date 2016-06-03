@@ -2,7 +2,7 @@
 #include <helper_functions.h>
 #include <helper_cuda.h>
 #include <helper_string.h>
-
+#include "init_cuda.h"
 
 template<class T>
 struct SharedMemory
@@ -44,7 +44,6 @@ reduce3(T *g_idata, T *g_odata, unsigned int n)
     // perform first level of reduction,
     // reading from global memory, writing to shared memory
 	
-	unsigned long j=blockIdx.x+gridDim.x*blockIdx.y+gridDim.y*gridDim.x*blockIdx.z;
 	
 	unsigned int tid = threadIdx.x;
 	
@@ -80,11 +79,58 @@ reduce3(T *g_idata, T *g_odata, unsigned int n)
 
 __global__ void initilize_wdz(double *w,double *wdz,double ds2);
 __global__ void initilize_q(double *q,double *qInt,int ns1);
-__global__ void initilize_in(double *in,double *g,double *wdz,int ns1,int iz);
+__global__ void initilize_in(cufftDoubleComplex *in,double *g,double *wdz,int ns1,int iz);
 __global__ void display_GPU_double_data2(double *data,int N);
-__global__ void average_GPU_double_data(double *data,double *average);
+__global__ void display_GPU_complex_data2(cufftDoubleComplex *data,int N);
+__global__ void minus_average(double *data,double average_value);
 
 
+extern void average_value(std::vector<double*> data,GPU_INFO *gpu_info,CUFFT_INFO *cufft_info){
+	int gpu_index;
+	int threads=1024;
+	int smemSize = (threads <= 32) ? 2 * threads * sizeof(double) : threads * sizeof(double);
+	std::vector<double*> average_cu;
+	double *average;
+	double average_value;
+
+	average_cu.resize(gpu_info->GPU_N);
+	average=(double *)malloc(sizeof(double)*gpu_info->GPU_N);
+	
+	for(gpu_index=0;gpu_index<gpu_info->GPU_N;gpu_index++){	
+		checkCudaErrors(cudaSetDevice(gpu_info->whichGPUs[gpu_index]));
+		checkCudaErrors(cudaMalloc(&(average_cu[gpu_index]), sizeof(double)));
+		
+		reduce3<double><<< 1, threads, smemSize >>>(data[gpu_index], average_cu[gpu_index], cufft_info->NxNyNz_gpu);
+		cudaDeviceSynchronize();
+		checkCudaErrors(cudaMemcpy(&average[gpu_index],  average_cu[gpu_index],sizeof(double),cudaMemcpyDeviceToHost));
+		
+		cudaDeviceSynchronize();
+	}
+	
+	average_value=0;	
+	for(gpu_index=0;gpu_index<gpu_info->GPU_N;gpu_index++){	
+		average_value+=average[gpu_index];
+		
+		
+		cudaFree(average_cu[gpu_index]);
+		
+	}
+
+	average_value=average_value/cufft_info->NxNyNz;
+	
+	dim3 Grid(cufft_info->Nx_cu,cufft_info->Ny_cu),Block(cufft_info->Nz_cu);
+	
+	for(gpu_index=0;gpu_index<gpu_info->GPU_N;gpu_index++){
+		checkCudaErrors(cudaSetDevice(gpu_info->whichGPUs[gpu_index]));	
+		minus_average<<<Grid,Block>>>(data[gpu_index],average_value);
+		
+	}
+	cudaDeviceSynchronize();
+	
+
+	
+	free(average);
+}
 
 extern void sovDifFft(GPU_INFO *gpu_info,CUFFT_INFO *cufft_info,std::vector<double*> g,std::vector<double*> w,int ns,int sign){
 	int ns1=ns+1;
@@ -93,38 +139,101 @@ extern void sovDifFft(GPU_INFO *gpu_info,CUFFT_INFO *cufft_info,std::vector<doub
 	int Nz_cu=cufft_info->Nz_cu;
 	int gpu_index;	
 	int iz;
-	dim3 grid(Nx_cu,Ny_cu,1),block(Nz_cu,1,1);
-	double average;	
-	std::vector<double*> average_cu;
-	average_cu.resize(gpu_info->GPU_N);
-	int threads=128;
-	int smemSize = (threads <= 32) ? 2 * threads * sizeof(double) : threads * sizeof(double);
+	dim3 grid(16,16,1),block(16,1,1);
 	
 	
+	cufftDoubleComplex *array;
+	
+	array=(cufftDoubleComplex *)malloc(sizeof(cufftDoubleComplex)*256*256*256);
+	
+	for(int i=0;i<256*256*256;i++){
+		array[i].x=i;
+		array[i].y=0;
+	}
+	
+	
+	printf("up to here\n");
+	
+	checkCufft(cufftXtMemcpy (cufft_info->plan_forward, cufft_info->device_in, array, CUFFT_COPY_HOST_TO_DEVICE)); 
+	checkCufft(cufftXtExecDescriptorZ2Z(cufft_info->plan_forward, cufft_info->device_in, cufft_info->device_in, CUFFT_FORWARD));
+	for(gpu_index=0;gpu_index<4;gpu_index++){	
+				
+		checkCudaErrors(cudaSetDevice(gpu_info->whichGPUs[gpu_index]));
+		display_GPU_complex_data2<<<1,8>>>((cufftDoubleComplex*)cufft_info->device_in->descriptor->data[gpu_index],gpu_info->whichGPUs[gpu_index]);
+		cudaDeviceSynchronize();
+	}
+	
+	
+	cudaEvent_t start,stop;
+	
+
+
+	float msec;
+	checkCudaErrors(cudaEventCreate(&start));
+	checkCudaErrors(cudaEventCreate(&stop));
+	checkCudaErrors(cudaEventRecord(start,NULL));
+
+	average_value(w,gpu_info,cufft_info);
+	
+	checkCudaErrors(cudaEventRecord(stop,NULL));
+	checkCudaErrors(cudaEventSynchronize(stop));
+	checkCudaErrors(cudaEventSynchronize(start));
+	checkCudaErrors(cudaEventElapsedTime(&msec,start,stop));
+	printf("timea=%g \n",msec);
+	checkCudaErrors(cudaEventRecord(start,NULL));
+
+	checkCufft(cufftXtExecDescriptorZ2Z(cufft_info->plan_forward, cufft_info->device_in, cufft_info->device_in, CUFFT_FORWARD));
+	checkCudaErrors(cudaEventRecord(stop,NULL));
+	checkCudaErrors(cudaEventSynchronize(stop));
+	checkCudaErrors(cudaEventSynchronize(start));
+	checkCudaErrors(cudaEventElapsedTime(&msec,start,stop));
+	printf("timeb=%g \n",msec);
+	
+/*
 	for(gpu_index=0;gpu_index<gpu_info->GPU_N;gpu_index++){	
-		checkCudaErrors(cudaSetDevice(gpu_index));
+		checkCudaErrors(cudaSetDevice(gpu_info->whichGPUs[gpu_index]));
 		
-		checkCudaErrors(cudaMalloc(&(average_cu[gpu_index]), sizeof(double)));
 		
-		initilize_wdz<<<grid,block>>>(w[gpu_index],cufft_info->wdz_cu[gpu_index],cufft_info->ds2);
+		
+		//initilize_wdz<<<grid,block>>>(w[gpu_index],cufft_info->wdz_cu[gpu_index],cufft_info->ds2);
+		
 		cudaDeviceSynchronize();
 		//display_GPU_double_data2<<<10,10>>>(cufft_info->wdz_cu[gpu_index],gpu_index);
-		average_GPU_double_data<<<10,10>>>(cufft_info->wa_cu[gpu_index],average_cu[gpu_index]);
 		
-		if(gpu_index==0){
-		reduce3<double><<< 1, threads, smemSize >>>(cufft_info->wa_cu[gpu_index], average_cu[gpu_index], 1000);
-		//display_GPU_double_data2<<<10,10>>>(cufft_info->wa_cu[gpu_index],gpu_index);
-		display_GPU_double_data2<<<1,1>>>(average_cu[gpu_index],gpu_index);
-		}
+		
+		
+	}
+	printf("%d %d %d\n",Nx_cu,Ny_cu,Nz_cu);
+	
 		if(sign==1){
-			/*
-			initilize_q<<<grid,block>>>(g[gpu_index],cufft_info->qInt_cu[gpu_index],ns1);
-
-			for(iz=1;iz<=ns;iz++){
-				
-				initilize_in<<<grid,block>>>((double*)cufft_info->device_in->descriptor->data[gpu_index],g,cufft_info->wdz_cu[gpu_index],ns1,iz);
+			for(gpu_index=0;gpu_index<gpu_info->GPU_N;gpu_index++){	
+				checkCudaErrors(cudaSetDevice(gpu_info->whichGPUs[gpu_index]));
+				//initilize_q<<<grid,block>>>(g[gpu_index],cufft_info->qInt_cu[gpu_index],ns1);
+				cudaDeviceSynchronize();
 			}
-			*/
+			for(iz=1;iz<=1;iz++){
+				for(gpu_index=0;gpu_index<gpu_info->GPU_N;gpu_index++){	
+					checkCudaErrors(cudaSetDevice(gpu_info->whichGPUs[gpu_index]));
+					
+					//initilize_q<<<grid,block>>>(g[gpu_index],cufft_info->qInt_cu[gpu_index],ns1);
+					initilize_in<<<grid,block>>>((cufftDoubleComplex*)cufft_info->device_in->descriptor->data[gpu_index],g[gpu_index],cufft_info->wdz_cu[gpu_index],ns1,iz);//(double*)cufft_info->device_in->descriptor->data[gpu_index]
+					cudaDeviceSynchronize();
+				}
+				for(gpu_index=1;gpu_index<4;gpu_index++){	
+				
+				checkCudaErrors(cudaSetDevice(gpu_info->whichGPUs[gpu_index]));
+				//display_GPU_complex_data2<<<16,1>>>((cufftDoubleComplex*)cufft_info->device_in->descriptor->data[gpu_index],gpu_info->whichGPUs[gpu_index]);
+				}
+				
+				printf("here is normal\n");
+				//checkCufft(cufftXtExecDescriptorZ2Z(cufft_info->plan_forward, cufft_info->device_in, cufft_info->device_in, CUFFT_FORWARD));
+				 
+				
+				cudaDeviceSynchronize();
+				getLastCudaError("Kernel execution failed [  ]");
+				
+			}
+			
 
 		}
 		
@@ -133,8 +242,8 @@ extern void sovDifFft(GPU_INFO *gpu_info,CUFFT_INFO *cufft_info,std::vector<doub
 	
 
 		}	
-	}
-
+	
+	*/
 }
 
 __global__ void initilize_wdz(double *w,double *wdz,double ds2){
@@ -154,17 +263,18 @@ __global__ void initilize_q(double *q,double *qInt,int ns1){
 	DIM=blockDim.x*blockDim.y*blockDim.z;
 	ijk=i+j*DIM;
 	q[ijk*ns1]=qInt[ijk];
+	
 	__syncthreads();
 }
-__global__ void initilize_in(double *in,double *g,double *wdz,int ns1,int iz){
+__global__ void initilize_in(cufftDoubleComplex *in,double *g,double *wdz,int ns1,int iz){
 
 	long i=threadIdx.x+threadIdx.y*blockDim.x+threadIdx.z*blockDim.x*blockDim.y;
 	long j=blockIdx.x+gridDim.x*blockIdx.y+gridDim.y*gridDim.x*blockIdx.z;
 	long DIM,ijk;
 	DIM=blockDim.x*blockDim.y*blockDim.z;
 	ijk=i+j*DIM;
-	in[ijk]=g[ijk*ns1+iz-1]*wdz[ijk];
-
+	in[ijk].x=ijk;//g[ijk*ns1+iz-1]*wdz[ijk];
+	in[ijk].y=0;
 	__syncthreads();
 
 }
@@ -179,8 +289,7 @@ __global__ void display_GPU_double_data2(double *data,int N){
 	printf("gpu%d :%ld %g \n",N,ij,data[ij]);
 	__syncthreads();
 }
-
-__global__ void average_GPU_double_data(double *data,double *average){
+__global__ void display_GPU_complex_data2(cufftDoubleComplex *data,int N){
 	long i=threadIdx.x+threadIdx.y*blockDim.x+threadIdx.z*blockDim.x*blockDim.y;
 	long j=blockIdx.x+gridDim.x*blockIdx.y+gridDim.y*gridDim.x*blockIdx.z;
 	long DIM,ij;
@@ -188,8 +297,20 @@ __global__ void average_GPU_double_data(double *data,double *average){
 	DIM=blockDim.x*blockDim.y*blockDim.z;
 	
 	ij=i+j*DIM;
-	average[0]+=data[ij];
+	printf("gpu%d :%ld %g %g\n",N,ij,data[ij].x,data[ij].y);
 	__syncthreads();
+}
+__global__ void minus_average(double *data,double average_value){
+	long i=threadIdx.x+threadIdx.y*blockDim.x+threadIdx.z*blockDim.x*blockDim.y;
+	long j=blockIdx.x+gridDim.x*blockIdx.y+gridDim.y*gridDim.x*blockIdx.z;
+	long DIM,ij;
+
+	DIM=blockDim.x*blockDim.y*blockDim.z;
+	
+	ij=i+j*DIM;
+	
+	data[ij]=data[ij]-average_value;
+	
 
 }
 
