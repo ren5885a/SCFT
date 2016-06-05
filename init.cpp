@@ -13,6 +13,12 @@ int init_scft(CUFFT_INFO *cufft_info,GPU_INFO *gpu_info,int argc, char **argv){
 	cufft_info->MaxIT=getCmdLineArgumentInt(argc, (const char **) argv, "step");
 	char comment[200];
 
+	if(cufft_info->MaxIT<1){
+		printf("Iterative step is not set, defalt set as 10,");
+		cufft_info->MaxIT=10;
+		printf("It could well be set by flag -step=Num \n");
+
+	}
 	if (0 != typeChoice){
         	if (!strcasecmp(typeChoice, "GPU")){
 			gpu_info->kernal_type = 1;
@@ -38,7 +44,7 @@ int init_scft(CUFFT_INFO *cufft_info,GPU_INFO *gpu_info,int argc, char **argv){
 	
 		fscanf(fp,"intag=%d\n",&cufft_info->intag);		//in=1: inputing configuration is given;
 		fscanf(fp,"xN=%lf\n",&cufft_info->hAB);
-		fscanf(fp, "fa=%lf\n", &cufft_info->fA);
+		fscanf(fp,"fa=%lf\n", &cufft_info->fA);
 		fscanf(fp,"lx=%lf, ly=%lf, lz=%lf\n",&cufft_info->lx, &cufft_info->ly, &cufft_info->lz);
 		fscanf(fp,"Nx=%d, Ny=%d, Nz=%d\n",&cufft_info->Nx, &cufft_info->Ny, &cufft_info->Nz);
 		fscanf(fp,"ds0=%lf\n", &cufft_info->ds0);
@@ -76,6 +82,11 @@ int init_scft(CUFFT_INFO *cufft_info,GPU_INFO *gpu_info,int argc, char **argv){
 	else if(gpu_info->kernal_type==2)
 	
 		printf("In this programm, we use CPU.\n");
+	else if(gpu_info->kernal_type==-1){
+
+		printf("set kernal type by flag -kernal=GPU/CPU\n");
+	}
+	
 	
 	
 	

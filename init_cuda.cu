@@ -54,7 +54,7 @@ extern void init_cuda(GPU_INFO *gpu_info,int display){
 	checkCudaErrors(cudaGetDeviceCount(&gpu_info->GPU_N));
 	
 	if(gpu_info->GPU_N==8)
-	gpu_info->GPU_N=4;
+	gpu_info->GPU_N=2;
 	gpu_info->whichGPUs=(int*)malloc(sizeof(int)*(gpu_info->GPU_N));
 	
 	for(i=0;i<(gpu_info->GPU_N);i++)
@@ -162,7 +162,7 @@ extern void initialize_cufft(GPU_INFO *gpu_info,CUFFT_INFO *cufft_info){
 	checkCufft(cufftMakePlanMany (cufft_info->plan_backward, rank, Dim, NULL, 1, 1, NULL, 1, 1, CUFFT_Z2Z, batch, cufft_info->worksize));
 	
 	checkCufft(cufftXtMalloc (cufft_info->plan_forward, &cufft_info->device_in, CUFFT_XT_FORMAT_INPLACE)); 
-	checkCufft(cufftXtMalloc (cufft_info->plan_backward, (cudaLibXtDesc **)&cufft_info->device_out, CUFFT_XT_FORMAT_INPLACE)); 
+	checkCufft(cufftXtMalloc (cufft_info->plan_forward, &cufft_info->device_out, CUFFT_XT_FORMAT_INPLACE)); 
 	
 	
 	cudaDeviceSynchronize();

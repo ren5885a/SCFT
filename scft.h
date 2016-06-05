@@ -2,4 +2,4 @@
 #include"stdio.h"
 #include</usr/include/fftw3.h>
 
-int fftw3(double *data_in,int Nx, int Ny,int Nz,double *data_out);
+int fftw3_test(GPU_INFO *gpu_info,CUFFT_INFO *cufft_info);
