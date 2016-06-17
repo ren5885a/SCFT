@@ -215,7 +215,7 @@ ifeq ($(SAMPLE_ENABLED),0)
 EXEC ?= @echo "[@]"
 endif
 
-HEADER = init_cuda.h struct.h cuda_scft.h scft.h init.h
+HEADER = init_cuda.h struct.h cuda_scft.h scft.h init.h MGPU_Cufft.h cuda_aid.cuh
 FLAGFFT=-lcufft -lfftw3 
 ################################################################################
 
@@ -246,7 +246,13 @@ scan.o:init_cuda.cu  $(HEADER)
 cuda_scft.o:cuda_scft.cu  $(HEADER)
 	$(EXEC) $(NVCC) $(INCLUDES) $(ALL_CCFLAGS) $(GENCODE_FLAGS) -lcufft -o $@ -c $<
 
-scan: main.o scan.o cuda_scft.o scft.o init.o
+MGPU_Cufft.o:MGPU_Cufft.cu  $(HEADER)
+	$(EXEC) $(NVCC) $(INCLUDES) $(ALL_CCFLAGS) $(GENCODE_FLAGS) -lcufft -o $@ -c $<
+
+cuda_aid.o:cuda_aid.cu  $(HEADER)
+	$(EXEC) $(NVCC) $(INCLUDES) $(ALL_CCFLAGS) $(GENCODE_FLAGS) -lcufft -o $@ -c $<
+
+scan: main.o scan.o cuda_scft.o scft.o init.o MGPU_Cufft.o cuda_aid.o
 	$(EXEC) $(NVCC) $(ALL_LDFLAGS) $(GENCODE_FLAGS) $(FLAGFFT) -std=c++11 -o $@ $+ $(LIBRARIES) 
 
 
