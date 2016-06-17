@@ -7,6 +7,8 @@
 //Header stuff here
 #define Pi 3.1415926535
 
+
+
 typedef struct {
 	int Nx;
 	int Ny;
@@ -47,7 +49,9 @@ typedef struct{
 	int Nz_cu;
 	
 	long NxNyNz;	//!total grid number
-	long NxNyNz1;
+	long Nxh1NyNz;
+	
+	long Nxh1NyNz_gpu;
 	long NxNyNz_gpu;	//! grid number in each GPU
 
 	int Nxh1;
@@ -75,10 +79,12 @@ typedef struct{
 
 	double *in;
 	cufftDoubleComplex *out;
+
+	cufftDoubleComplex *wijk_cu;
 	
 	cudaLibXtDesc *device_in;
 	cudaLibXtDesc *device_out;
-
+	
 	
 
 	size_t *worksize;
@@ -93,8 +99,14 @@ typedef struct{
 	double *phb;
 	double *phc;
 
+	double *cufft_sequence;
+
 	double **kxyzdz_cu;//! pointer which is to kxyzdz in each gpu, the same in each GPU not acoording to grid.	
 	double *kxyzdz;//!	pointer to CPU
+
+	std::vector<double*> device_in_cu;
+	std::vector<cufftDoubleComplex*> device_out_cu;
+	std::vector<cufftDoubleComplex*> device_rotate_cu;
 
 	std::vector<double*> qa_cu;
 	std::vector<double*> wa_cu;

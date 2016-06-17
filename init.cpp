@@ -27,9 +27,13 @@ int init_scft(CUFFT_INFO *cufft_info,GPU_INFO *gpu_info,int argc, char **argv){
         		gpu_info->kernal_type = 2;
         	}
        		else{
-            		gpu_info->kernal_type = 0;
+            		gpu_info->kernal_type = -1;
         	}
     	}
+	else{
+
+			gpu_info->kernal_type = 1;
+	}
 	
 	if(gpu_info->kernal_type==1){
 	

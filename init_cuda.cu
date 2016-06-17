@@ -6,6 +6,8 @@
 
 
 #include "init_cuda.h"
+#include "cuda_aid.cuh"
+
 /* The number of the grid point should be divisible by GPU number*/
 
 inline bool IsGPUCapableP2P(cudaDeviceProp *pProp)
@@ -37,9 +39,9 @@ void checkCufft(cufftResult result)
 
 
 
-__global__ void display_GPU_Complex_data(cufftDoubleComplex *data);
-__global__ void display_GPU_double_data(double *data,int N);
-__global__ void initialize_GPU_double_data(double *data,int index,int NxNyNz);
+
+
+
 
 extern void init_cuda(GPU_INFO *gpu_info,int display){
 	
@@ -54,7 +56,7 @@ extern void init_cuda(GPU_INFO *gpu_info,int display){
 	checkCudaErrors(cudaGetDeviceCount(&gpu_info->GPU_N));
 	
 	if(gpu_info->GPU_N==8)
-	gpu_info->GPU_N=2;
+	gpu_info->GPU_N=4;
 	gpu_info->whichGPUs=(int*)malloc(sizeof(int)*(gpu_info->GPU_N));
 	
 	for(i=0;i<(gpu_info->GPU_N);i++)
@@ -112,10 +114,16 @@ extern void initialize_cufft(GPU_INFO *gpu_info,CUFFT_INFO *cufft_info){
 	cufft_info->Nx_cu=cufft_info->Nx;
 	cufft_info->Ny_cu=cufft_info->Ny;
 	cufft_info->Nz_cu=cufft_info->Nz/gpu_info->GPU_N;
+
+	
 	
 	long NxNyNz=cufft_info->Nx*cufft_info->Ny*cufft_info->Nz,ijk;
 	cufft_info->NxNyNz=NxNyNz;
 	cufft_info->NxNyNz_gpu=NxNyNz/gpu_info->GPU_N;
+	cufft_info->Nxh1=Nx/2+1;
+	cufft_info->Nxh1NyNz=cufft_info->Nxh1*Ny*Nz;
+	cufft_info->Nxh1NyNz_gpu=cufft_info->Nxh1*Ny*cufft_info->Nz_cu;
+
 	int batch=cufft_info->batch;
 	double dx,dy,dz;
 	double temp;
@@ -143,7 +151,7 @@ extern void initialize_cufft(GPU_INFO *gpu_info,CUFFT_INFO *cufft_info){
 	//-----------! Initialize CUFFT settings. ------------------------------------------------------
 	
 	
-	
+	dim3 grid(1,cufft_info->Nx,cufft_info->Ny),block(1,1,cufft_info->Nz);
 	cufft_info->worksize=(size_t *)malloc(sizeof(size_t)*(gpu_info->GPU_N));
 	
 	checkCufft(cufftCreate(&cufft_info->plan_forward));
@@ -158,11 +166,37 @@ extern void initialize_cufft(GPU_INFO *gpu_info,CUFFT_INFO *cufft_info){
 	
 	Dim[0]=Nz;Dim[1]=Ny;Dim[2]=Nx;
 	
-	checkCufft(cufftMakePlanMany (cufft_info->plan_forward, rank, Dim, NULL, 1, 1, NULL, 1, 1, CUFFT_Z2Z, batch, cufft_info->worksize));
-	checkCufft(cufftMakePlanMany (cufft_info->plan_backward, rank, Dim, NULL, 1, 1, NULL, 1, 1, CUFFT_Z2Z, batch, cufft_info->worksize));
+	//checkCufft(cufftMakePlanMany (cufft_info->plan_forward, rank, Dim, NULL, 1, 1, NULL, 1, 1, CUFFT_Z2Z, batch, cufft_info->worksize));
+	checkCufft(cufftMakePlan3d (cufft_info->plan_forward, Dim[0],Dim[1],Dim[2],CUFFT_Z2Z,cufft_info->worksize));
+	
+	//checkCufft(cufftMakePlan3d (cufft_info->plan_backward, Dim[0],Dim[1],Dim[2],CUFFT_Z2Z,cufft_info->worksize));
+	
+	//checkCufft(cufftMakePlanMany (cufft_info->plan_forward, rank, Dim, NULL, 1, 1, NULL, 1, 1, CUFFT_Z2Z, batch, cufft_info->worksize));
 	
 	checkCufft(cufftXtMalloc (cufft_info->plan_forward, &cufft_info->device_in, CUFFT_XT_FORMAT_INPLACE)); 
 	checkCufft(cufftXtMalloc (cufft_info->plan_forward, &cufft_info->device_out, CUFFT_XT_FORMAT_INPLACE)); 
+
+	cufftDoubleComplex *array;
+	
+	array=(cufftDoubleComplex *)malloc(sizeof(cufftDoubleComplex)*cufft_info->NxNyNz);
+	
+	for(int i=0;i<cufft_info->NxNyNz;i++){
+		array[i].x=(double)i;
+		array[i].y=0;
+		
+	}
+	
+	//checkCufft(cufftXtMemcpy (cufft_info->plan_forward, cufft_info->device_in, array, CUFFT_COPY_HOST_TO_DEVICE)); 
+	for(int gpu_index=0;gpu_index<gpu_info->GPU_N;gpu_index++){	
+		checkCudaErrors(cudaSetDevice(gpu_info->whichGPUs[gpu_index]));
+		//initialize_GPU_cufftDoubleComplex_data2<<<grid,block>>>((cufftDoubleComplex*)cufft_info->device_in->descriptor->data[gpu_index],gpu_index,cufft_info->NxNyNz_gpu);
+	}
+	//checkCufft(cufftXtMemcpy (cufft_info->plan_forward, array, cufft_info->device_in, CUFFT_COPY_DEVICE_TO_HOST)); 
+	
+	for(int i=0;i<cufft_info->NxNyNz;i++){
+		//printf("%d %g %g\n",i,array[i].x,array[i].y);
+		
+	}
 	
 	
 	cudaDeviceSynchronize();
@@ -242,6 +276,10 @@ extern void initialize_cufft(GPU_INFO *gpu_info,CUFFT_INFO *cufft_info){
 	cufft_info->wdz_cu.resize(gpu_info->GPU_N);
 	cufft_info->qInt_cu.resize(gpu_info->GPU_N);
 
+	cufft_info->device_in_cu.resize(gpu_info->GPU_N);
+	cufft_info->device_rotate_cu.resize(gpu_info->GPU_N);
+	cufft_info->device_out_cu.resize(gpu_info->GPU_N);
+
 	
 	printf("Wonderful We have successfully initialized CPU setting.\n");
 	//-----------! Initialize malloc and initilize on each GPUs. ------------------------------------------------------	
@@ -255,11 +293,11 @@ extern void initialize_cufft(GPU_INFO *gpu_info,CUFFT_INFO *cufft_info){
 	for (i=0; i < gpu_info->GPU_N; i++){
 
 		checkCudaErrors(cudaSetDevice(gpu_info->whichGPUs[i]));
-		
+		checkCudaErrors(cudaStreamCreate(&cufft_info->stream[i]));
 		
 		checkCudaErrors(cudaMalloc((void**)&(cufft_info->kxyzdz_cu[i]), sizeof(double)* NxNyNz));
 		checkCudaErrors(cudaMemcpy(cufft_info->kxyzdz_cu[i],  cufft_info->kxyzdz,sizeof(double)*NxNyNz,cudaMemcpyHostToDevice));
-		dim3 grid(1,1,1),block(4,16,16);
+		
 		
 		
 		
@@ -271,9 +309,11 @@ extern void initialize_cufft(GPU_INFO *gpu_info,CUFFT_INFO *cufft_info){
 		checkCudaErrors(cudaMalloc(&(cufft_info->wdz_cu[i]), sizeof(double)* cufft_info->NxNyNz_gpu));
 		
 		checkCudaErrors(cudaMalloc(&(cufft_info->wb_cu[i]), sizeof(double)* cufft_info->NxNyNz_gpu));
-		checkCudaErrors(cudaMalloc(&(cufft_info->qa_cu[i]), sizeof(double)* cufft_info->NxNyNz_gpu*(cufft_info->NsA+1)*batch));//cufft_info->NsA
+		checkCudaErrors(cudaMalloc(&(cufft_info->qa_cu[i]), sizeof(double)* cufft_info->NxNyNz_gpu*batch));//cufft_info->NsA (cufft_info->NsA+1)*
 		
-		
+		checkCudaErrors(cudaMalloc(&(cufft_info->device_in_cu[i]), sizeof(double)* cufft_info->NxNyNz_gpu));
+		checkCudaErrors(cudaMalloc(&(cufft_info->device_out_cu[i]), sizeof(cufftDoubleComplex)* cufft_info->Nxh1NyNz_gpu));
+		checkCudaErrors(cudaMalloc(&(cufft_info->device_rotate_cu[i]), sizeof(cufftDoubleComplex)* cufft_info->Nxh1NyNz_gpu));
 		
 		
 	}
@@ -307,6 +347,11 @@ extern void finalize_cufft(GPU_INFO *gpu_info,CUFFT_INFO *cufft_info){
 		checkCudaErrors(cudaFree(cufft_info->wa_cu[i]));
 		checkCudaErrors(cudaFree(cufft_info->wb_cu[i]));
 		checkCudaErrors(cudaFree(cufft_info->wdz_cu[i]));
+		
+		checkCudaErrors(cudaFree(cufft_info->device_in_cu[i]));
+		checkCudaErrors(cudaFree(cufft_info->device_out_cu[i]));
+
+
 		for(j=0;j<gpu_info->GPU_N;j++){
 			if(i!=j){
 				checkCudaErrors(cudaSetDevice(gpu_info->whichGPUs[i]));
@@ -462,7 +507,7 @@ extern void D1_MultipleGPU(GPU_INFO *gpu_info,data_assem *data_test,int N){
 	printf("%zu %zu \n", device_data_input->descriptor->size[0],device_data_input->descriptor->size[1]); 		
 	printf("%zu %zu \n", worksize[0],worksize[1]); 
 	cudaSetDevice(0);
-	display_GPU_Complex_data<<<1,10>>>((cufftDoubleComplex*)device_data_input->descriptor->data[0]);
+	//display_GPU_Complex_data<<<1,10>>>((cufftDoubleComplex*)device_data_input->descriptor->data[0]);
 
 	if(result!=CUFFT_SUCCESS){
 		printf("failed 2\n");
@@ -516,43 +561,7 @@ extern void D1_MultipleGPU(GPU_INFO *gpu_info,data_assem *data_test,int N){
 }
 
 
-__global__ void display_GPU_Complex_data(cufftDoubleComplex *data){
-	long i=threadIdx.x+threadIdx.y*blockDim.x;
-	long j=blockIdx.x+gridDim.x*blockIdx.y+gridDim.y*gridDim.x*blockIdx.z;
-	long DIM,ij;
 
-	DIM=blockDim.x*blockDim.y*blockDim.z;
-	
-	ij=i+j*DIM;
-	printf("%ld %g %g\n",ij,data[ij].x,data[ij].y);
-	__syncthreads();
-}
-
-__global__ void display_GPU_double_data(double *data,int N){
-	long i=threadIdx.x+threadIdx.y*blockDim.x+threadIdx.z*blockDim.x*blockDim.y;
-	long j=blockIdx.x+gridDim.x*blockIdx.y+gridDim.y*gridDim.x*blockIdx.z;
-	long DIM,ij;
-
-	DIM=blockDim.x*blockDim.y*blockDim.z;
-	
-	ij=i+j*DIM;
-	printf("gpu%d :%ld %g \n",N,ij,data[ij]);
-	__syncthreads();
-}
-
-__global__ void initialize_GPU_double_data(double *data,int index,int NxNyNz){
-	long i=threadIdx.x+threadIdx.y*blockDim.x+threadIdx.z*blockDim.x*blockDim.y;
-	long j=blockIdx.x+gridDim.x*blockIdx.y+gridDim.y*gridDim.x*blockIdx.z;
-	long DIM,ij;
-
-	DIM=blockDim.x*blockDim.y*blockDim.z;
-	
-	ij=i+j*DIM;
-	
-	data[ij]=ij+index*NxNyNz;
-	
-	__syncthreads();
-}
 
 
 /*

@@ -4,6 +4,11 @@
 #include <helper_string.h>
 #include "init_cuda.h"
 #include <errno.h>
+
+#include <typeinfo>
+#include"cuda_aid.cuh"
+
+
 template<class T>
 struct SharedMemory
 {
@@ -84,6 +89,8 @@ __global__ void display_GPU_double_data2(double *data,int N);
 __global__ void display_GPU_complex_data2(cufftDoubleComplex *data,int N);
 __global__ void minus_average(double *data,double average_value);
 __global__ void initialize_GPU_cufftDoubleComplex_data(cufftDoubleComplex *data,int index,int NxNyNz);
+__global__ void initialize_wijk_cufftDoubleComplex_data(cufftDoubleComplex *data);
+
 
 extern void average_value(std::vector<double*> data,GPU_INFO *gpu_info,CUFFT_INFO *cufft_info){
 	int gpu_index;
@@ -131,7 +138,14 @@ extern void average_value(std::vector<double*> data,GPU_INFO *gpu_info,CUFFT_INF
 	
 	free(average);
 }
+extern void fft_test(GPU_INFO *gpu_info,CUFFT_INFO *cufft_info){
+	checkCudaErrors(cudaSetDevice(gpu_info->whichGPUs[0]));
+	dim3 grid(cufft_info->Nx,cufft_info->Ny,cufft_info->Nz); 
+	checkCudaErrors(cudaMalloc(&(cufft_info->wijk_cu), sizeof(double)* cufft_info->NxNyNz));
+	initialize_wijk_cufftDoubleComplex_data<<<grid,1>>>(cufft_info->wijk_cu);
+	display_GPU_complex_data2<<<grid,1>>>(cufft_info->wijk_cu,0);
 
+}
 extern void sovDifFft(GPU_INFO *gpu_info,CUFFT_INFO *cufft_info,std::vector<double*> g,std::vector<double*> w,int ns,int sign){
 	int ns1=ns+1;
 	int Nx_cu=cufft_info->Nx_cu;
@@ -139,7 +153,7 @@ extern void sovDifFft(GPU_INFO *gpu_info,CUFFT_INFO *cufft_info,std::vector<doub
 	int Nz_cu=cufft_info->Nz_cu;
 	int gpu_index;	
 	int iz;
-	dim3 grid(1,8,1),block(16,1,1);
+	dim3 grid(1,1,1),block(1,2,4);
 	
 	
 	cufftDoubleComplex *array;
@@ -147,34 +161,59 @@ extern void sovDifFft(GPU_INFO *gpu_info,CUFFT_INFO *cufft_info,std::vector<doub
 	array=(cufftDoubleComplex *)malloc(sizeof(cufftDoubleComplex)*cufft_info->NxNyNz);
 	
 	for(int i=0;i<cufft_info->NxNyNz;i++){
-		array[i].x=i;
+		array[i].x=(double)i;
 		array[i].y=0;
+		
 	}
 	
 	
-	
-	
+	printf("size is %zu %zu %zu\n",cufft_info->device_in->descriptor->size[0],cufft_info->device_in->descriptor->size[1],sizeof(cufftDoubleComplex));
+	printf("size is %zu %zu %zu\n",cufft_info->device_out->descriptor->size[0],cufft_info->device_out->descriptor->size[1],sizeof(cufftDoubleComplex));
 	checkCufft(cufftXtMemcpy (cufft_info->plan_forward, cufft_info->device_in, array, CUFFT_COPY_HOST_TO_DEVICE)); 
-	checkCufft(cufftXtExecDescriptorZ2Z(cufft_info->plan_forward, cufft_info->device_in, cufft_info->device_in, CUFFT_FORWARD));
-	//checkCufft(cufftXtExecDescriptorZ2Z(cufft_info->plan_forward, cufft_info->device_in, cufft_info->device_in, CUFFT_INVERSE));
-	checkCufft(cufftXtMemcpy (cufft_info->plan_forward, cufft_info->device_out, cufft_info->device_in, CUFFT_COPY_DEVICE_TO_DEVICE)); 
+	
+	checkCufft(cufftXtExecDescriptorZ2Z(cufft_info->plan_forward, cufft_info->device_in, cufft_info->device_in,CUFFT_FORWARD));
+	checkCufft(cufftXtExecDescriptorZ2Z(cufft_info->plan_forward, cufft_info->device_in, cufft_info->device_in,CUFFT_FORWARD));
+	
+	for(gpu_index=0;gpu_index<gpu_info->GPU_N;gpu_index++){	
+				
+		checkCudaErrors(cudaSetDevice(gpu_info->whichGPUs[gpu_index]));
+		Memerycopy_cufftDoubleComplex<<<grid,block>>>((cufftDoubleComplex*)cufft_info->device_in->descriptor->data[gpu_index],(cufftDoubleComplex*)cufft_info->device_out->descriptor->data[gpu_index]);
+		initialize_GPU_cufftDoubleComplex_data<<<grid,block>>>((cufftDoubleComplex*)cufft_info->device_in->descriptor->data[gpu_index],gpu_index,cufft_info->NxNyNz_gpu);
+		cudaDeviceSynchronize();
+
+	}
+	//checkCufft(cufftXtMemcpy (cufft_info->plan_forward, cufft_info->device_out, cufft_info->device_in, CUFFT_COPY_DEVICE_TO_DEVICE)); 
+	checkCudaErrors(cudaSetDevice(gpu_info->whichGPUs[0]));
+	printf("transform\n");
+	//checkCufft(cufftXtExecDescriptorZ2Z(cufft_info->plan_forward, cufft_info->device_out, cufft_info->device_out,CUFFT_INVERSE));
+	printf("up to here\n");
+	
+	
 
 	
 	for(gpu_index=0;gpu_index<gpu_info->GPU_N;gpu_index++){	
 				
 		checkCudaErrors(cudaSetDevice(gpu_info->whichGPUs[gpu_index]));
-		initialize_GPU_cufftDoubleComplex_data<<<grid,block>>>((cufftDoubleComplex*)cufft_info->device_out->descriptor->data[gpu_index],gpu_index,cufft_info->NxNyNz_gpu);
+		//initialize_GPU_cufftDoubleComplex_data<<<grid,block>>>((cufftDoubleComplex*)cufft_info->device_out->descriptor->data[gpu_index],gpu_index,cufft_info->NxNyNz_gpu);
+		//initialize_GPU_cufftDoubleComplex_data<<<grid,block>>>((cufftDoubleComplex*)cufft_info->device_in->descriptor->data[gpu_index],gpu_index,cufft_info->NxNyNz_gpu);
 		display_GPU_complex_data2<<<grid,block>>>((cufftDoubleComplex*)cufft_info->device_out->descriptor->data[gpu_index],gpu_info->whichGPUs[gpu_index]);
 		cudaDeviceSynchronize();
 	
 	}
-	checkCufft(cufftXtMemcpy (cufft_info->plan_forward, array, cufft_info->device_out, CUFFT_COPY_DEVICE_TO_HOST)); 
+	for(int i=0;i<cufft_info->NxNyNz;i++){
+		array[i].x=0;
+		array[i].y=0;
+		
+	}
+	
+	checkCufft(cufftXtMemcpy (cufft_info->plan_forward, array, cufft_info->device_in, CUFFT_COPY_DEVICE_TO_HOST)); 
+	checkCudaErrors(cudaSetDevice(gpu_info->whichGPUs[0]));
 	
 	FILE *dp;
 		
 	if((dp=fopen("cufft_compare.dat","w"))==false) printf("did not open file\n");
 		for(int i=0;i<cufft_info->NxNyNz;i++){
-			if(array[i].x!=0||array[i].y!=0)
+			if(abs(array[i].x)>=0.00000001||abs(array[i].y)>0.00000001)
 			fprintf(dp,"%d %g %g\n",i,array[i].x,array[i].y);
 		}
 	
@@ -183,7 +222,7 @@ extern void sovDifFft(GPU_INFO *gpu_info,CUFFT_INFO *cufft_info,std::vector<doub
 	cudaEvent_t start,stop;
 	
 
-
+/*
 	float msec;
 	checkCudaErrors(cudaEventCreate(&start));
 	checkCudaErrors(cudaEventCreate(&stop));
@@ -313,7 +352,7 @@ __global__ void display_GPU_complex_data2(cufftDoubleComplex *data,int N){
 	DIM=blockDim.x*blockDim.y*blockDim.z;
 	
 	ij=i+j*DIM;
-	if(data[ij].x!=0||data[ij].y!=0)
+	if(abs(data[ij].x)>=0.00000001||abs(data[ij].y)>=0.00000001)
 	printf("gpu%d :%ld %g %g\n",N,ij,data[ij].x,data[ij].y);
 	__syncthreads();
 }
@@ -339,10 +378,37 @@ __global__ void initialize_GPU_cufftDoubleComplex_data(cufftDoubleComplex *data,
 	
 	ij=i+j*DIM;
 	
-	data[ij].x=ij+index*NxNyNz;
+	data[ij].x=ij+NxNyNz*index;
 	data[ij].y=0;
 	__syncthreads();
 }
+
+
+__global__ void initialize_wijk_cufftDoubleComplex_data(cufftDoubleComplex *data){
+	long i=threadIdx.x+threadIdx.y*blockDim.x+threadIdx.z*blockDim.x*blockDim.y;
+	long j=blockIdx.x+gridDim.x*blockIdx.y+gridDim.y*gridDim.x*blockIdx.z;
+	long DIM,ij;
+
+	DIM=blockDim.x*blockDim.y*blockDim.z;
+	
+	ij=i+j*DIM;
+	
+	data[ij].x=cos(-2*Pi*((double)blockIdx.x/gridDim.x+(double)blockIdx.y/gridDim.y+(double)blockIdx.z/gridDim.z));
+	data[ij].y=sin(-2*Pi*((double)blockIdx.x/gridDim.x+(double)blockIdx.y/gridDim.y+(double)blockIdx.z/gridDim.z));
+	__syncthreads();
+	
+
+}
+
+
+
+
+
+
+
+
+
+
 
 
 
